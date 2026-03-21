@@ -14,7 +14,9 @@ const KEYBOARD_MAP = {
 };
 
 function App() {
-  const { isReady: isMidiReady, activeNotes: midiNotes, error: midiError } = useMidi();
+  // We grab emitMidiEvent here to send computer/mouse inputs to Python!
+  const { isReady: isMidiReady, activeNotes: midiNotes, error: midiError, emitMidiEvent } = useMidi();
+  
   const [localNotes, setLocalNotes] = useState({});
   const [audioEnabled, setAudioEnabled] = useState(false);
   
@@ -46,6 +48,7 @@ function App() {
       if (note && !localNotes[note]) {
         playNote(note);
         setLocalNotes((prev) => ({ ...prev, [note]: true }));
+        if (emitMidiEvent) emitMidiEvent("note_on", note); // Send to Python
       }
     };
 
@@ -58,6 +61,7 @@ function App() {
           delete newNotes[note];
           return newNotes;
         });
+        if (emitMidiEvent) emitMidiEvent("note_off", note); // Send to Python
       }
     };
 
@@ -68,14 +72,13 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [audioEnabled, localNotes]);
+  }, [audioEnabled, localNotes, emitMidiEvent]);
 
   const allActiveNotes = Array.from(
     new Set([...Object.keys(midiNotes || {}), ...Object.keys(localNotes || {})])
   );
 
   return (
-    // Replaced the constrained div with a full-width 100vw container
     <div style={{ width: '100vw', margin: 0, padding: 0, overflowX: 'hidden', fontFamily: 'sans-serif', backgroundColor: '#fafafa', minHeight: '100vh' }}>
       
       {/* Header UI Area */}
@@ -92,7 +95,7 @@ function App() {
           </button>
         ) : (
           <div style={{ padding: '1rem', backgroundColor: '#e9ecef', borderRadius: '8px', marginBottom: '1rem' }}>
-            <p style={{ color: 'green', fontWeight: 'bold', margin: '0' }}>🔊 Audio Engine Active</p>
+            <p style={{ color: 'green', fontWeight: 'bold', margin: '0' }}>🔊 Audio Engine & WebSocket Active</p>
           </div>
         )}
 
@@ -139,11 +142,10 @@ function App() {
           width: '100%', 
           overflowX: 'auto', 
           display: 'flex', 
-          paddingBottom: '2rem' // Keep it off the very bottom of the window
+          paddingBottom: '2rem'
         }}
       >
         <div style={{ margin: '0 auto', display: 'inline-flex', flexDirection: 'column' }}>
-          {/* Notice we pass audioEnabled down to the Waterfall now */}
           <Waterfall song={targetSong} isPlaying={isPlaying} onReset={resetKey} audioEnabled={audioEnabled} />
           
           <PianoKeyboard 
@@ -151,6 +153,7 @@ function App() {
             onPlayNote={(note) => {
               if (audioEnabled) playNote(note);
               setLocalNotes(prev => ({ ...prev, [note]: true }));
+              if (emitMidiEvent) emitMidiEvent("note_on", note); // Send to Python
             }}
             onStopNote={(note) => {
               if (audioEnabled) stopNote(note);
@@ -159,6 +162,7 @@ function App() {
                 delete newNotes[note];
                 return newNotes;
               });
+              if (emitMidiEvent) emitMidiEvent("note_off", note); // Send to Python
             }}
           />
         </div>

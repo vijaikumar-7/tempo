@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { WebMidi } from 'webmidi';
 import { playNote, stopNote } from './AudioEngine'; 
 
@@ -6,19 +6,38 @@ export function useMidi() {
   const [isReady, setIsReady] = useState(false);
   const [activeNotes, setActiveNotes] = useState({});
   const [error, setError] = useState(null);
+  const wsRef = useRef(null);
+
+  // 1. Create a reusable helper function to send data to Python
+  const emitMidiEvent = (type, note) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: type,
+        note: note,
+        time: performance.now()
+      }));
+    }
+  };
 
   useEffect(() => {
-    // We create a helper function to attach listeners so we can reuse it
+    wsRef.current = new WebSocket('ws://localhost:8000/ws');
+    wsRef.current.onopen = () => console.log("🔌 Connected to Python Server!");
+    wsRef.current.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.action === "processed_note") {
+        console.log(`🎹 Python says: You played ${data.note} for ${data.duration_seconds}s!`);
+      }
+    };
+
     const attachListeners = (input) => {
-      // Prevent attaching multiple times to the same keyboard
       if (input.hasListener("noteon")) return; 
-      
       console.log(`✅ Connected to physical keyboard: ${input.name}`);
 
       input.addListener("noteon", (e) => {
         const noteName = e.note.identifier;
         setActiveNotes((prev) => ({ ...prev, [noteName]: true }));
         playNote(noteName); 
+        emitMidiEvent("note_on", noteName); // Use the helper for physical keys
       });
 
       input.addListener("noteoff", (e) => {
@@ -29,40 +48,29 @@ export function useMidi() {
           return newNotes;
         });
         stopNote(noteName); 
+        emitMidiEvent("note_off", noteName); // Use the helper for physical keys
       });
     };
 
     WebMidi.enable()
       .then(() => {
         setIsReady(true);
-        console.log("WebMidi enabled for Tempo! Looking for devices...");
-
-        // 1. Check devices that are already awake and connected
         WebMidi.inputs.forEach(attachListeners);
-
-        // 2. Listen for devices that are plugged in (or wake up) AFTER the page loads
         WebMidi.addListener("connected", (e) => {
-          if (e.port.type === "input") {
-            console.log(`🔌 New device detected: ${e.port.name}`);
-            attachListeners(e.port);
-          }
-        });
-
-        WebMidi.addListener("disconnected", (e) => {
-          if (e.port.type === "input") {
-            console.log(`❌ Device disconnected: ${e.port.name}`);
-          }
+          if (e.port.type === "input") attachListeners(e.port);
         });
       })
       .catch((err) => {
         console.error("WebMidi could not be enabled.", err);
-        setError("Please allow MIDI access in your browser to use Tempo.");
+        setError("Please allow MIDI access.");
       });
 
     return () => {
       WebMidi.disable();
+      if (wsRef.current) wsRef.current.close();
     };
   }, []);
 
-  return { isReady, activeNotes, error };
+  // 2. Export emitMidiEvent so App.jsx can use it!
+  return { isReady, activeNotes, error, emitMidiEvent }; 
 }
