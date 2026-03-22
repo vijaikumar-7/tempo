@@ -40,7 +40,7 @@ const normalizeMidiData = (parsedMidi) => {
       const match = note.name.match(/^([A-G](?:#|b)?)(-?\d+)$/);
       if (!match) return;
       const [, baseNote, octave] = match;
-      if (flatToSharp[baseNote]) note.name = `${flatToSharp[baseNote]}${octave}`;
+      if (flatToSharp[baseNote]) note.name = ⁠ ${flatToSharp[baseNote]}${octave} ⁠;
     });
   });
 
@@ -192,7 +192,7 @@ function App() {
       ...prev,
       [playedNote]: {
         type: feedbackType,
-        label: expectedNote ? `${feedbackType.toUpperCase()} — expected ${expectedNote}` : `Played ${playedNote}`,
+        label: expectedNote ? ⁠ ${feedbackType.toUpperCase()} — expected ${expectedNote} ⁠ : ⁠ Played ${playedNote} ⁠,
       },
     }));
     clearFeedbackAfterDelay(playedNote);
@@ -254,7 +254,7 @@ function App() {
 
     try {
       let midi;
-      const proxyUrl = `http://localhost:8000/api/proxy-midi?url=${encodeURIComponent(url)}`;
+      const proxyUrl = ⁠ https://tempo-backend-zkpc.onrender.com/api/proxy-midi?url=${encodeURIComponent(url)} ⁠;
 
       try {
         midi = await Midi.fromUrl(proxyUrl);
@@ -292,13 +292,13 @@ function App() {
       const formData = new FormData();
       formData.append('user_audio', wavBlob, 'user_performance.wav');
 
-      const response = await fetch('http://localhost:8000/api/generate-backing-track', {
+      const response = await fetch('https://tempo-backend-zkpc.onrender.com/api/generate-backing-track', {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error(`generate-backing-track failed with status ${response.status}`);
+        throw new Error(⁠ generate-backing-track failed with status ${response.status} ⁠);
       }
 
       const returnedBlob = await response.blob();
@@ -387,7 +387,7 @@ function App() {
       setCoachThinking(false);
     };
 
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+    const wsUrl = 'wss://tempo-backend-zkpc.onrender.com/ws';
 
     if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
       const ws = new WebSocket(wsUrl);
@@ -646,24 +646,24 @@ function App() {
           <div className="kf-controls">
             <div className="kf-controls-row">
               <button
-                className={`kf-btn ${isPlaying ? 'kf-btn-warn' : 'kf-btn-accent'}`}
+                className={⁠ kf-btn ${isPlaying ? 'kf-btn-warn' : 'kf-btn-accent'} ⁠}
                 onClick={async () => {
                   await initAudio();
                   setIsPlaying((prev) => !prev);
                 }}
               >
-                {isPlaying ? '⏸ Pause' : '▶ Play'}
+                {isPlaying ? '⏸ Pause' : '▶️ Play'}
               </button>
 
               <button
-                className={`kf-btn ${isWaitMode ? 'kf-btn-purple' : 'kf-btn-outline'}`}
+                className={⁠ kf-btn ${isWaitMode ? 'kf-btn-purple' : 'kf-btn-outline'} ⁠}
                 onClick={() => setIsWaitMode((prev) => !prev)}
               >
                 Wait: {isWaitMode ? 'ON' : 'OFF'}
               </button>
 
               <button
-                className={`kf-btn ${isRecording ? 'kf-btn-warn' : 'kf-btn-outline'}`}
+                className={⁠ kf-btn ${isRecording ? 'kf-btn-warn' : 'kf-btn-outline'} ⁠}
                 onClick={isRecording ? stopRecording : startRecording}
               >
                 {isRecording ? '⏹ Stop' : '⏺ Record + AI Drums'}
@@ -723,7 +723,7 @@ function App() {
                 {songLibrary.map((song, idx) => (
                   <button
                     key={song.id || idx}
-                    className={`kf-song-item ${currentSongIndex === idx ? 'active' : ''}`}
+                    className={⁠ kf-song-item ${currentSongIndex === idx ? 'active' : ''} ⁠}
                     onClick={async () => {
                       await initAudio();
                       setCurrentSongIndex(idx);
@@ -750,10 +750,10 @@ function App() {
           />
 
           <div className="kf-integrations">
-            <span className={`kf-integration-badge ${isInsForgeConfigured() ? 'active' : ''}`}>
+            <span className={⁠ kf-integration-badge ${isInsForgeConfigured() ? 'active' : ''} ⁠}>
               {isInsForgeConfigured() ? '✓ InsForge' : '○ InsForge'}
             </span>
-            <span className={`kf-integration-badge ${wsConnected ? 'active' : ''}`}>
+            <span className={⁠ kf-integration-badge ${wsConnected ? 'active' : ''} ⁠}>
               {wsConnected ? '✓ AI Coach' : '○ AI Coach'}
             </span>
           </div>
