@@ -2,8 +2,13 @@ import json
 import os
 import asyncio
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+import tempfile
+import librosa
+import numpy as np
+import soundfile as sf
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -26,6 +31,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ══════════════════════════════════════════════════════
 # OPENAI COACHING
@@ -265,6 +271,76 @@ async def health():
         "tinyfish": bool(os.getenv("TINYFISH_API_KEY")),
     }
 
+
+# ══════════════════════════════════════════════════════
+# LOCAL RHYTHM GENERATION & MIXING
+# ══════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════
+# LOCAL RHYTHM GENERATION & MIXING
+# ══════════════════════════════════════════════════════
+
+@app.post("/api/generate-backing-track")
+async def generate_backing_track(user_audio: UploadFile = File(...)):
+    """
+    Analyzes the user's pure WAV audio for BPM, generates a synchronized
+    rhythm track, mixes them together locally, and returns the result.
+    """
+    # 1. Save the incoming WAV file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_in:
+        tmp_in.write(await user_audio.read())
+        wav_path = tmp_in.name
+
+    try:
+        print("🎵 Analyzing pure WAV audio for BPM and beats...")
+        # Load the audio (sr=None preserves the original sample rate)
+        y, sr = librosa.load(wav_path, sr=None)
+        
+        # We get both the tempo AND the exact frames where beats occur!
+        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
+        
+        detected_bpm = round(float(tempo[0]) if isinstance(tempo, (np.ndarray, list)) else float(tempo))
+        print(f"⏱️ Detected Tempo: {detected_bpm} BPM")
+        print(f"🥁 Found {len(beat_frames)} strong beats in the audio!")
+
+        # FALLBACK: If the recording was too short/ambient to find strict beats, force a metronome!
+        if len(beat_frames) == 0:
+            print("⚠️ No strong rhythmic beats detected. Forcing a steady metronome...")
+            safe_bpm = detected_bpm if detected_bpm > 0 else 120
+            samples_per_beat = int(sr * 60 / safe_bpm)
+            # Create an array of sample indices for every beat
+            beat_samples = np.arange(0, len(y), samples_per_beat)
+            # Convert sample indices back to frame indices for librosa.clicks
+            beat_frames = librosa.samples_to_frames(beat_samples)
+
+        print("🥁 Synthesizing high-pitched rhythm track...")
+        # 3. Generate a click track. 
+        # Changed to 1000Hz (high beep) so it is impossible to miss against the piano!
+        rhythm_track = librosa.clicks(frames=beat_frames, sr=sr, length=len(y), click_freq=1000.0, click_duration=0.1)
+
+        print("🎛️ Mixing audio tracks...")
+        # 4. Mix: Piano at 50% volume, loud click at 100% volume
+        mixed_audio = (y * 0.5) + (rhythm_track * 1.0)
+
+        # 5. Save the newly mixed audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_out:
+            output_wav_path = tmp_out.name
+
+        # Write out using soundfile
+        sf.write(output_wav_path, mixed_audio, sr)
+
+        print("✅ Local backing track mixed successfully!")
+
+        # 6. Return the newly mixed track back to the React app!
+        return FileResponse(output_wav_path, media_type="audio/wav", filename="mixed_drums.wav")
+
+    except Exception as e:
+        print(f"❌ Error processing audio: {e}")
+        raise HTTPException(500, f"Audio generation failed: {str(e)}")
+    finally:
+        # Clean up the original input file
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import * as Tone from 'tone'; // 🔥 NEW IMPORT: Explicitly import Tone
 import { Midi } from '@tonejs/midi';
 import { useMidi } from './hooks/useMidi';
 import { startAudioContext, playNote, stopNote } from './lib/AudioEngine';
@@ -20,6 +21,7 @@ import {
   shouldCompletePhrase,
   finalizePhrase,
 } from './lib/patternMatcher';
+import { convertWebmToWav } from './lib/wavEncoder';
 import './App.css';
 
 const KEYBOARD_MAP = {
@@ -44,7 +46,7 @@ const normalizeMidiData = (parsedMidi) => {
   return parsedMidi;
 };
 
-// 🔥 BULLETPROOF GLOBAL TIMELINE (Immune to React Strict Mode)
+// 🔥 BULLETPROOF GLOBAL TIMELINE
 let GLOBAL_TIMELINE = [];
 
 function App() {
@@ -61,6 +63,11 @@ function App() {
   const [lastPhraseSummary, setLastPhraseSummary] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
 
+  // 🥁 AI Backing Track State
+  const [isRecording, setIsRecording] = useState(false);
+  const [isGeneratingDrums, setIsGeneratingDrums] = useState(false);
+  const [mixedTrackUrl, setMixedTrackUrl] = useState(null);
+
   const mode = useStore((s) => s.mode);
   const addCoachMessage = useStore((s) => s.addCoachMessage);
   const updateSkill = useStore((s) => s.updateSkill);
@@ -72,7 +79,10 @@ function App() {
   const phraseTimerRef = useRef(null);
   const wsRef = useRef(null);
 
-  // Use a ref for local keys to prevent infinite re-renders on the event listener
+  // 🥁 Refs for audio recording
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
   const activeKeysRef = useRef({});
 
   const targetSong = currentSongIndex !== null ? songLibrary[currentSongIndex]?.midi ?? null : null;
@@ -91,7 +101,7 @@ function App() {
     setNoteFeedback({});
     exerciseStartRef.current = null;
     lastPlayedAtRef.current = 0;
-    GLOBAL_TIMELINE = []; // Clear our global array on reset!
+    GLOBAL_TIMELINE = []; 
     
     if (phraseTimerRef.current) {
       clearTimeout(phraseTimerRef.current);
@@ -109,6 +119,102 @@ function App() {
     if (!exerciseStartRef.current) return 0;
     return (performance.now() - exerciseStartRef.current) / 1000;
   };
+
+  // ══════════════════════════════════════════════════════
+  // 🎙️ AUDIO RECORDING & API LOGIC
+  // ══════════════════════════════════════════════════════
+
+  const startRecording = async () => {
+    await initAudio(); 
+
+    try {
+      // 🔥 FIX 1: Hook into Tone's existing output stream explicitly
+      const dest = Tone.getContext().rawContext.createMediaStreamDestination();
+      Tone.getDestination().connect(dest);
+
+      // 🔥 FIX 2: Ask for a format the browser fully supports
+      let options = {};
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        options = { mimeType: 'audio/webm;codecs=opus' };
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        options = { mimeType: 'audio/mp4' }; 
+      }
+
+      mediaRecorderRef.current = new MediaRecorder(dest.stream, options);
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = () => {
+        const actualMimeType = mediaRecorderRef.current.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
+
+        // 🔥 FIX 3: Check for tiny files (empty headers). 
+        if (audioBlob.size < 1000) {
+          alert("Recording failed: The audio file is empty. Make sure you play some notes!");
+          setIsGeneratingDrums(false);
+          return;
+        }
+
+        generateDrums(audioBlob);
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      
+      if (!isPlaying) setIsPlaying(true);
+
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+      alert("Could not start audio recording.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setIsPlaying(false);
+  };
+
+  const generateDrums = async (audioBlob) => {
+    setIsGeneratingDrums(true);
+    setMixedTrackUrl(null); 
+
+    try {
+      // Convert browser recording to pure WAV
+      const wavBlob = await convertWebmToWav(audioBlob);
+
+      const formData = new FormData();
+      formData.append('user_audio', wavBlob, 'user_performance.wav'); 
+
+      const response = await fetch('http://localhost:8000/api/generate-backing-track', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error('Failed to generate backing track');
+
+      const returnedBlob = await response.blob();
+      const url = URL.createObjectURL(returnedBlob);
+      
+      setMixedTrackUrl(url); 
+    } catch (error) {
+      console.error("Error generating drums:", error);
+      alert("Failed to generate AI drum track.");
+    } finally {
+      setIsGeneratingDrums(false);
+    }
+  };
+
+  // ══════════════════════════════════════════════════════
+  // CORE APP LOGIC
+  // ══════════════════════════════════════════════════════
 
   const completePhraseIfNeeded = (stateToCheck) => {
     const now = performance.now();
@@ -142,8 +248,7 @@ function App() {
 
     const playedTimeSeconds = getPlaybackTimeSeconds();
 
-    // 1. LOG TO TIMELINE EXACTLY ONCE (Outside of React's state updater)
-    let tempState = detectSkippedNotes({ state: matcherState, expectedNotes, playbackTimeSeconds: playedTimeSeconds });
+    let tempState = detectSkippedNotes({ state: matcherState, expectedNotes, playbackTimeSeconds: playedTimeSeconds, isWaitMode });
     const currentExpected = expectedNotes[tempState.expectedIndex];
 
     if (currentExpected) {
@@ -155,9 +260,8 @@ function App() {
       });
     }
 
-    // 2. NOW DO THE REACT STATE UPDATE
     setMatcherState((prevState) => {
-      let workingState = detectSkippedNotes({ state: prevState, expectedNotes, playbackTimeSeconds: playedTimeSeconds });
+      let workingState = detectSkippedNotes({ state: prevState, expectedNotes, playbackTimeSeconds: playedTimeSeconds, isWaitMode });
       const expected = expectedNotes[workingState.expectedIndex];
       
       const { state: evaluatedState, result } = evaluatePlayedNote({
@@ -166,10 +270,9 @@ function App() {
         playedNote: note, 
         playedTimeSeconds, 
         velocity,
-        isWaitMode // Passing the mode to the evaluator
+        isWaitMode
       });
 
-      // Handle UI feedback
       setTimeout(() => {
         setNoteFeedback((prev) => ({
           ...prev,
@@ -183,7 +286,6 @@ function App() {
 
       lastPlayedAtRef.current = performance.now();
 
-      // Handle Phrase Completion
       if (phraseTimerRef.current) clearTimeout(phraseTimerRef.current);
       phraseTimerRef.current = setTimeout(() => {
         setMatcherState((latestState) => completePhraseIfNeeded(latestState));
@@ -231,7 +333,6 @@ function App() {
     };
   }, []);
 
-  // Keyboard Event Listeners (Fixed dependencies to stop re-attaching)
   useEffect(() => {
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -242,7 +343,6 @@ function App() {
         e.stopPropagation();
         const note = KEYBOARD_MAP[key];
         
-        // Use ref instead of state to prevent duplicate firing
         if (note && !activeKeysRef.current[note]) {
           activeKeysRef.current[note] = true;
           setLocalNotes((prev) => ({ ...prev, [note]: true }));
@@ -271,7 +371,7 @@ function App() {
       window.removeEventListener('keydown', onKeyDown, { capture: true });
       window.removeEventListener('keyup', onKeyUp, { capture: true });
     };
-  }, []); // <-- Empty dependency array! It attaches once and never duplicates!
+  }, []);
 
   useEffect(() => {
     if (scrollWrapperRef.current) {
@@ -352,15 +452,38 @@ function App() {
                 onClick={async () => { await initAudio(); setIsPlaying((p) => !p); }}>
                 {isPlaying ? '⏸ Pause' : '▶ Play'}
               </button>
+              
               <button className={`kf-btn ${isWaitMode ? 'kf-btn-purple' : 'kf-btn-outline'}`}
                 onClick={() => setIsWaitMode((p) => !p)}>
                 Wait: {isWaitMode ? 'ON' : 'OFF'}
               </button>
+              
               <button className="kf-btn kf-btn-outline"
-                onClick={() => { setResetKey((p) => p + 1); setIsPlaying(false); resetMatcher(); }}>
+                onClick={() => { setResetKey((p) => p + 1); setIsPlaying(false); stopRecording(); resetMatcher(); }}>
                 ⏪ Rewind
               </button>
+
+              <button 
+                className={`kf-btn ${isRecording ? 'kf-btn-warn' : 'kf-btn-outline'}`}
+                onClick={isRecording ? stopRecording : startRecording}
+                style={{ marginLeft: 'auto' }}
+              >
+                {isRecording ? '⏹ Stop Recording' : '⏺ Record with AI Drums'}
+              </button>
             </div>
+
+            {isGeneratingDrums && (
+              <div className="mt-4 p-4 rounded-lg bg-blue-50 text-blue-800" style={{ animation: 'pulse 2s infinite', border: '1px solid #bfdbfe' }}>
+                <p className="font-semibold">🥁 Analyzing your tempo & generating AI drum beat...</p>
+              </div>
+            )}
+
+            {mixedTrackUrl && !isGeneratingDrums && (
+              <div className="mt-4 p-4 rounded-lg bg-gray-50 border border-gray-200 shadow-sm">
+                <h3 className="font-bold mb-2 text-gray-800">Listen with AI Backing Track!</h3>
+                <audio controls src={mixedTrackUrl} className="w-full" />
+              </div>
+            )}
 
             {currentSongName && (
               <div className="kf-now-playing">
@@ -400,13 +523,12 @@ function App() {
             <MidiLoader onMidiLoaded={handleMidiLoaded} />
           </div>
 
-          {/* AI Coach */}
           <CoachChat
             wsRef={wsRef}
             matcherState={matcherState}
             songName={currentSongName}
             mode={mode}
-            fullTimeline={GLOBAL_TIMELINE} // <--- Pass the pure global array!
+            fullTimeline={GLOBAL_TIMELINE} 
           />
 
           <SkillGraph />
