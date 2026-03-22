@@ -22,7 +22,6 @@ import {
 } from './lib/patternMatcher';
 import './App.css';
 
-// ── Keyboard mapping (team's original) ─────────────
 const KEYBOARD_MAP = {
   a: 'C3', w: 'C#3', s: 'D3', e: 'D#3', d: 'E3', f: 'F3',
   t: 'F#3', g: 'G3', y: 'G#3', h: 'A3', u: 'A#3', j: 'B3',
@@ -45,8 +44,10 @@ const normalizeMidiData = (parsedMidi) => {
   return parsedMidi;
 };
 
+// 🔥 BULLETPROOF GLOBAL TIMELINE (Immune to React Strict Mode)
+let GLOBAL_TIMELINE = [];
+
 function App() {
-  // ── Team's original state ────────────────────────
   const [localNotes, setLocalNotes] = useState({});
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [songLibrary, setSongLibrary] = useState([]);
@@ -60,7 +61,6 @@ function App() {
   const [lastPhraseSummary, setLastPhraseSummary] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
 
-  // ── New state ────────────────────────────────────
   const mode = useStore((s) => s.mode);
   const addCoachMessage = useStore((s) => s.addCoachMessage);
   const updateSkill = useStore((s) => s.updateSkill);
@@ -71,14 +71,13 @@ function App() {
   const lastPlayedAtRef = useRef(0);
   const phraseTimerRef = useRef(null);
   const wsRef = useRef(null);
-  
-  // ---> NEW: Bulletproof history tracker <---
-  const fullHistoryRef = useRef([]); 
+
+  // Use a ref for local keys to prevent infinite re-renders on the event listener
+  const activeKeysRef = useRef({});
 
   const targetSong = currentSongIndex !== null ? songLibrary[currentSongIndex]?.midi ?? null : null;
   const currentSongName = currentSongIndex !== null ? songLibrary[currentSongIndex]?.name ?? null : null;
 
-  // ── WebSocket connection tracking ────────────────
   useEffect(() => {
     const checkWs = setInterval(() => {
       setWsConnected(wsRef.current?.readyState === WebSocket.OPEN);
@@ -86,14 +85,14 @@ function App() {
     return () => clearInterval(checkWs);
   }, []);
 
-  // ── Matcher helpers (team's original) ────────────
   const resetMatcher = () => {
     setMatcherState(createMatcherState());
     setLastPhraseSummary(null);
     setNoteFeedback({});
     exerciseStartRef.current = null;
     lastPlayedAtRef.current = 0;
-    fullHistoryRef.current = []; // <--- Clear history on reset!
+    GLOBAL_TIMELINE = []; // Clear our global array on reset!
+    
     if (phraseTimerRef.current) {
       clearTimeout(phraseTimerRef.current);
       phraseTimerRef.current = null;
@@ -143,20 +142,35 @@ function App() {
 
     const playedTimeSeconds = getPlaybackTimeSeconds();
 
+    // 🔥 1. LOG TO TIMELINE EXACTLY ONCE (Outside of React's state updater!)
+    // We check the current state to find the expected note
+    let tempState = detectSkippedNotes({ state: matcherState, expectedNotes, playbackTimeSeconds: playedTimeSeconds });
+    const currentExpected = expectedNotes[tempState.expectedIndex];
+
+    if (currentExpected) {
+      const delta = Math.round((playedTimeSeconds - currentExpected.time) * 1000);
+      // Protect against hitting a key randomly 3 seconds before the song starts
+      if (delta > -500) {
+        GLOBAL_TIMELINE.push({
+          expected: currentExpected.note,
+          played: note,
+          timingDeltaMs: delta
+        });
+      }
+    }
+    // Notice: There is no 'else' block here anymore! 
+    // If the song is over (currentExpected is null), it simply ignores the keystrokes. No more trailing nulls!
+
+    // 2. NOW DO THE REACT STATE UPDATE
     setMatcherState((prevState) => {
       let workingState = detectSkippedNotes({ state: prevState, expectedNotes, playbackTimeSeconds: playedTimeSeconds });
       const expected = expectedNotes[workingState.expectedIndex];
+      
       const { state: evaluatedState, result } = evaluatePlayedNote({
         state: workingState, expectedNote: expected, playedNote: note, playedTimeSeconds, velocity,
       });
 
-      // ---> NEW: Safely store every single note played <---
-      fullHistoryRef.current.push({
-        expected: expected ? expected.note : null,
-        played: note,
-        timingDeltaMs: result?.timingDeltaMs || 0
-      });
-
+      // Side-effects inside state updaters are pushed to the next tick to keep React happy
       setTimeout(() => {
         setNoteFeedback((prev) => ({
           ...prev,
@@ -185,7 +199,6 @@ function App() {
     });
   };
 
-  // ── MIDI hook ────────────────────────────────────
   const { isReady: isMidiReady, activeNotes: midiNotes, error: midiError } = useMidi({
     onNoteEvent: (event) => {
       if (event.type === 'note_on') {
@@ -203,6 +216,12 @@ function App() {
       ws.onopen = () => setWsConnected(true);
       ws.onclose = () => setWsConnected(false);
       ws.onerror = () => setWsConnected(false);
+      
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        addCoachMessage(msg);
+      };
+      
       wsRef.current = ws;
     }
     return () => {
@@ -212,7 +231,7 @@ function App() {
     };
   }, []);
 
-  // ── Keyboard input ───────────────────────────────
+  // Keyboard Event Listeners (Fixed dependencies to stop re-attaching)
   useEffect(() => {
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -222,9 +241,12 @@ function App() {
         e.preventDefault();
         e.stopPropagation();
         const note = KEYBOARD_MAP[key];
-        if (note && !localNotes[note]) {
-          playNote(note);
+        
+        // Use ref instead of state to prevent duplicate firing
+        if (note && !activeKeysRef.current[note]) {
+          activeKeysRef.current[note] = true;
           setLocalNotes((prev) => ({ ...prev, [note]: true }));
+          playNote(note);
           handleMatchedNote(note, 80, 'keyboard');
         }
       }
@@ -236,20 +258,21 @@ function App() {
         e.preventDefault();
         const note = KEYBOARD_MAP[key];
         if (note) {
-          stopNote(note);
+          activeKeysRef.current[note] = false;
           setLocalNotes((prev) => { const n = { ...prev }; delete n[note]; return n; });
+          stopNote(note);
         }
       }
     }
+    
     window.addEventListener('keydown', onKeyDown, { capture: true });
     window.addEventListener('keyup', onKeyUp, { capture: true });
     return () => {
       window.removeEventListener('keydown', onKeyDown, { capture: true });
       window.removeEventListener('keyup', onKeyUp, { capture: true });
     };
-  }, [localNotes]);
+  }, []); // <-- Empty dependency array! It attaches once and never duplicates!
 
-  // ── Song loading ─────────────────────────────────
   useEffect(() => {
     if (scrollWrapperRef.current) {
       scrollWrapperRef.current.scrollLeft = 720 - window.innerWidth / 2;
@@ -282,7 +305,6 @@ function App() {
 
   const currentExpected = expectedNotes[matcherState.expectedIndex] || null;
 
-  // ── Render ───────────────────────────────────────
   return (
     <div className="kf-app">
       <Header midiReady={isMidiReady} midiError={midiError} wsConnected={wsConnected} />
@@ -306,20 +328,18 @@ function App() {
                 noteFeedback={noteFeedback}
                 onPlayNote={async (note) => {
                   await initAudio();
-                  if (!localNotes[note]) {
-                    playNote(note);
+                  if (!activeKeysRef.current[note]) {
+                    activeKeysRef.current[note] = true;
                     setLocalNotes((prev) => ({ ...prev, [note]: true }));
+                    playNote(note);
                     handleMatchedNote(note, 80, 'virtual');
                   }
                 }}
                 onStopNote={(note) => {
-                  if (localNotes[note]) {
+                  if (activeKeysRef.current[note]) {
+                    activeKeysRef.current[note] = false;
+                    setLocalNotes((prev) => { const n = { ...prev }; delete n[note]; return n; });
                     stopNote(note);
-                    setLocalNotes((prev) => { 
-                      const n = { ...prev }; 
-                      delete n[note]; 
-                      return n; 
-                    });
                   }
                 }}
               />
@@ -386,7 +406,7 @@ function App() {
             matcherState={matcherState}
             songName={currentSongName}
             mode={mode}
-            fullTimeline={fullHistoryRef.current} // <--- Pass down the new timeline!
+            fullTimeline={GLOBAL_TIMELINE} // <--- Pass the pure global array!
           />
 
           <SkillGraph />
