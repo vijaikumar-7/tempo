@@ -24,23 +24,48 @@ import { convertWebmToWav } from './lib/wavEncoder';
 import './App.css';
 
 const KEYBOARD_MAP = {
-  a: 'C3', w: 'C#3', s: 'D3', e: 'D#3', d: 'E3', f: 'F3',
-  t: 'F#3', g: 'G3', y: 'G#3', h: 'A3', u: 'A#3', j: 'B3',
-  k: 'C4', o: 'C#4', l: 'D4', p: 'D#4', ';': 'E4', "'": 'F4',
-  ']': 'F#4', '\\': 'G4',
+  a: 'C3',
+  w: 'C#3',
+  s: 'D3',
+  e: 'D#3',
+  d: 'E3',
+  f: 'F3',
+  t: 'F#3',
+  g: 'G3',
+  y: 'G#3',
+  h: 'A3',
+  u: 'A#3',
+  j: 'B3',
+  k: 'C4',
+  o: 'C#4',
+  l: 'D4',
+  p: 'D#4',
+  ';': 'E4',
+  "'": 'F4',
+  ']': 'F#4',
+  '\\': 'G4',
 };
 
 const PIANO_KEYS_SET = new Set(Object.keys(KEYBOARD_MAP));
 
 const normalizeMidiData = (parsedMidi) => {
-  const flatToSharp = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
+  const flatToSharp = {
+    Db: 'C#',
+    Eb: 'D#',
+    Gb: 'F#',
+    Ab: 'G#',
+    Bb: 'A#',
+  };
 
   parsedMidi.tracks.forEach((track) => {
     track.notes.forEach((note) => {
       const match = note.name.match(/^([A-G](?:#|b)?)(-?\d+)$/);
       if (!match) return;
+
       const [, baseNote, octave] = match;
-      if (flatToSharp[baseNote]) note.name = ⁠ ${flatToSharp[baseNote]}${octave} ⁠;
+      if (flatToSharp[baseNote]) {
+        note.name = `${flatToSharp[baseNote]}${octave}`;
+      }
     });
   });
 
@@ -61,7 +86,6 @@ function App() {
   const [noteFeedback, setNoteFeedback] = useState({});
   const [lastAttemptSummary, setLastAttemptSummary] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
-
   const [isRecording, setIsRecording] = useState(false);
   const [isGeneratingDrums, setIsGeneratingDrums] = useState(false);
   const [mixedTrackUrl, setMixedTrackUrl] = useState(null);
@@ -86,14 +110,19 @@ function App() {
   const coachStreamBufferRef = useRef('');
   const coachStreamActiveRef = useRef(false);
 
-  const targetSong = currentSongIndex !== null ? songLibrary[currentSongIndex]?.midi ?? null : null;
-  const currentSongName = currentSongIndex !== null ? songLibrary[currentSongIndex]?.name ?? null : null;
+  const targetSong =
+    currentSongIndex !== null ? songLibrary[currentSongIndex]?.midi ?? null : null;
+
+  const currentSongName =
+    currentSongIndex !== null ? songLibrary[currentSongIndex]?.name ?? null : null;
 
   useEffect(() => {
     fetch('/songs.json')
       .then((res) => res.json())
       .then((data) => setExternalLibrary(Array.isArray(data) ? data : []))
-      .catch((err) => console.error('Could not load songs.json from public folder:', err));
+      .catch((err) =>
+        console.error('Could not load songs.json from public folder:', err)
+      );
   }, []);
 
   useEffect(() => {
@@ -101,10 +130,10 @@ function App() {
       try {
         const midi = await Midi.fromUrl('/Happy Birthday MIDI.mid');
         const cleanedMidi = normalizeMidiData(midi);
-        const defaultSong = { 
-          name: 'Happy Birthday', 
-          midi: cleanedMidi, 
-          id: 'happy-birthday-default' 
+        const defaultSong = {
+          name: 'Happy Birthday',
+          midi: cleanedMidi,
+          id: 'happy-birthday-default',
         };
         setSongLibrary([defaultSong]);
         setCurrentSongIndex(0);
@@ -156,7 +185,11 @@ function App() {
 
   const completeAttemptIfNeeded = (stateToCheck, force = false) => {
     const now = performance.now();
-    if (!force && !shouldCompleteAttempt(stateToCheck, lastAttemptActivityAtRef.current, now)) {
+
+    if (
+      !force &&
+      !shouldCompleteAttempt(stateToCheck, lastAttemptActivityAtRef.current, now)
+    ) {
       return stateToCheck;
     }
 
@@ -192,9 +225,12 @@ function App() {
       ...prev,
       [playedNote]: {
         type: feedbackType,
-        label: expectedNote ? ⁠ ${feedbackType.toUpperCase()} — expected ${expectedNote} ⁠ : ⁠ Played ${playedNote} ⁠,
+        label: expectedNote
+          ? `${feedbackType.toUpperCase()} - expected ${expectedNote}`
+          : `Played ${playedNote}`,
       },
     }));
+
     clearFeedbackAfterDelay(playedNote);
   };
 
@@ -211,6 +247,7 @@ function App() {
     });
 
     const expectedNote = expectedNotes[afterSkips.expectedIndex] || null;
+
     const { state: afterEvaluation, result } = evaluatePlayedNote({
       state: afterSkips,
       expectedNote,
@@ -221,7 +258,6 @@ function App() {
     });
 
     let nextState = afterEvaluation;
-
     pushFeedback(note, result.expected, result.feedbackType);
 
     const activityNow = performance.now();
@@ -250,11 +286,14 @@ function App() {
 
   const handleExternalSongSelect = async (url) => {
     if (!url) return;
+
     setIsLoadingSong(true);
 
     try {
       let midi;
-      const proxyUrl = ⁠ https://tempo-backend-zkpc.onrender.com/api/proxy-midi?url=${encodeURIComponent(url)} ⁠;
+      const proxyUrl = `https://tempo-backend-zkpc.onrender.com/api/proxy-midi?url=${encodeURIComponent(
+        url
+      )}`;
 
       try {
         midi = await Midi.fromUrl(proxyUrl);
@@ -264,8 +303,14 @@ function App() {
       }
 
       const cleanedMidi = normalizeMidiData(midi);
-      const songTitle = externalLibrary.find((song) => song.url === url)?.title || 'Remote Song';
-      const newSong = { name: songTitle, midi: cleanedMidi, id: url };
+      const songTitle =
+        externalLibrary.find((song) => song.url === url)?.title || 'Remote Song';
+
+      const newSong = {
+        name: songTitle,
+        midi: cleanedMidi,
+        id: url,
+      };
 
       setSongLibrary((prev) => [newSong, ...prev]);
       setCurrentSongIndex(0);
@@ -273,7 +318,9 @@ function App() {
       resetMatcher();
     } catch (err) {
       console.error('Error loading remote MIDI:', err);
-      alert('Could not retrieve the MIDI file. If the proxy route is not available, direct loading may be blocked by CORS.');
+      alert(
+        'Could not retrieve the MIDI file. If the proxy route is not available, direct loading may be blocked by CORS.'
+      );
     } finally {
       setIsLoadingSong(false);
     }
@@ -292,13 +339,18 @@ function App() {
       const formData = new FormData();
       formData.append('user_audio', wavBlob, 'user_performance.wav');
 
-      const response = await fetch('https://tempo-backend-zkpc.onrender.com/api/generate-backing-track', {
-        method: 'POST',
-        body: formData,
-      });
+      const response = await fetch(
+        'https://tempo-backend-zkpc.onrender.com/api/generate-backing-track',
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
 
       if (!response.ok) {
-        throw new Error(⁠ generate-backing-track failed with status ${response.status} ⁠);
+        throw new Error(
+          `generate-backing-track failed with status ${response.status}`
+        );
       }
 
       const returnedBlob = await response.blob();
@@ -321,8 +373,8 @@ function App() {
       const mimeType = MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : '';
-      const options = mimeType ? { mimeType } : undefined;
 
+      const options = mimeType ? { mimeType } : undefined;
       mediaRecorderRef.current = new MediaRecorder(destination.stream, options);
       audioChunksRef.current = [];
 
@@ -342,6 +394,7 @@ function App() {
 
       mediaRecorderRef.current.start();
       setIsRecording(true);
+
       if (!isPlaying) setIsPlaying(true);
     } catch (error) {
       console.error('Could not start recording:', error);
@@ -353,11 +406,16 @@ function App() {
     if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
+
     setIsRecording(false);
     setIsPlaying(false);
   };
 
-  const { isReady: isMidiReady, activeNotes: midiNotes, error: midiError } = useMidi({
+  const {
+    isReady: isMidiReady,
+    activeNotes: midiNotes,
+    error: midiError,
+  } = useMidi({
     onNoteEvent: (event) => {
       if (event.type === 'note_on') {
         playNote(event.note);
@@ -387,16 +445,18 @@ function App() {
       setCoachThinking(false);
     };
 
-    const wsUrl = 'wss://tempo-backend-zkpc.onrender.com/ws';
+    const wsUrl = "wss://tempo-backend-zkpc.onrender.com/ws";
 
     if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => setWsConnected(true);
+
       ws.onclose = () => {
         setWsConnected(false);
         finishAssistantStream();
       };
+
       ws.onerror = () => {
         setWsConnected(false);
         finishAssistantStream();
@@ -404,6 +464,7 @@ function App() {
 
       ws.onmessage = (event) => {
         let msg;
+
         try {
           msg = JSON.parse(event.data);
         } catch (error) {
@@ -509,13 +570,14 @@ function App() {
     function onKeyDown(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.repeat) return;
+
       const key = e.key.toLowerCase();
       if (!PIANO_KEYS_SET.has(key)) return;
 
       e.preventDefault();
       e.stopPropagation();
-      const note = KEYBOARD_MAP[key];
 
+      const note = KEYBOARD_MAP[key];
       if (note && !activeKeysRef.current[note]) {
         activeKeysRef.current[note] = true;
         setLocalNotes((prev) => ({ ...prev, [note]: true }));
@@ -526,10 +588,12 @@ function App() {
 
     function onKeyUp(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
       const key = e.key.toLowerCase();
       if (!PIANO_KEYS_SET.has(key)) return;
 
       e.preventDefault();
+
       const note = KEYBOARD_MAP[key];
       if (!note) return;
 
@@ -557,9 +621,11 @@ function App() {
     }
   }, []);
 
-  useEffect(() => () => {
-    if (attemptTimerRef.current) clearTimeout(attemptTimerRef.current);
-    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+  useEffect(() => {
+    return () => {
+      if (attemptTimerRef.current) clearTimeout(attemptTimerRef.current);
+      if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    };
   }, []);
 
   useEffect(() => {
@@ -581,27 +647,34 @@ function App() {
     }));
 
     setSongLibrary((prev) => [...prev, ...cleaned]);
+
     if (currentSongIndex === null && cleaned.length > 0) {
       setCurrentSongIndex(songLibrary.length);
     }
   };
 
   const allActiveNotes = useMemo(() => {
-    return Array.from(new Set([
-      ...Object.keys(localNotes),
-      ...Object.keys(midiNotes),
-    ]));
+    return Array.from(
+      new Set([...Object.keys(localNotes), ...Object.keys(midiNotes)])
+    );
   }, [localNotes, midiNotes]);
 
   const currentExpected = expectedNotes[matcherState.expectedIndex] || null;
 
   return (
     <div className="kf-app">
-      <Header midiReady={isMidiReady} midiError={midiError} wsConnected={wsConnected} />
+      <Header
+        midiReady={isMidiReady}
+        midiError={midiError}
+        wsConnected={wsConnected}
+      />
 
       <div className="kf-main">
         <div className="kf-play-area">
-          <ScoreDisplay matcherState={matcherState} currentExpectedNote={currentExpected} />
+          <ScoreDisplay
+            matcherState={matcherState}
+            currentExpectedNote={currentExpected}
+          />
 
           <div className="kf-waterfall-wrapper" ref={scrollWrapperRef}>
             <div className="kf-waterfall-inner">
@@ -614,12 +687,14 @@ function App() {
                 isWaitMode={isWaitMode}
                 playbackTimeRef={playbackTimeRef}
               />
+
               <PianoKeyboard
                 activeNotes={allActiveNotes}
                 noteFeedback={noteFeedback}
                 onPlayNote={async (note) => {
                   await initAudio();
                   if (activeKeysRef.current[note]) return;
+
                   activeKeysRef.current[note] = true;
                   setLocalNotes((prev) => ({ ...prev, [note]: true }));
                   playNote(note);
@@ -627,6 +702,7 @@ function App() {
                 }}
                 onStopNote={(note) => {
                   if (!activeKeysRef.current[note]) return;
+
                   activeKeysRef.current[note] = false;
                   setLocalNotes((prev) => {
                     const next = { ...prev };
@@ -638,32 +714,34 @@ function App() {
               />
             </div>
           </div>
-
-
         </div>
 
         <div className="kf-sidebar">
           <div className="kf-controls">
             <div className="kf-controls-row">
               <button
-                className={⁠ kf-btn ${isPlaying ? 'kf-btn-warn' : 'kf-btn-accent'} ⁠}
+                className={`kf-btn ${isPlaying ? 'kf-btn-warn' : 'kf-btn-accent'}`}
                 onClick={async () => {
                   await initAudio();
                   setIsPlaying((prev) => !prev);
                 }}
               >
-                {isPlaying ? '⏸ Pause' : '▶️ Play'}
+                {isPlaying ? '⏸ Pause' : '▶ Play'}
               </button>
 
               <button
-                className={⁠ kf-btn ${isWaitMode ? 'kf-btn-purple' : 'kf-btn-outline'} ⁠}
+                className={`kf-btn ${
+                  isWaitMode ? 'kf-btn-purple' : 'kf-btn-outline'
+                }`}
                 onClick={() => setIsWaitMode((prev) => !prev)}
               >
                 Wait: {isWaitMode ? 'ON' : 'OFF'}
               </button>
 
               <button
-                className={⁠ kf-btn ${isRecording ? 'kf-btn-warn' : 'kf-btn-outline'} ⁠}
+                className={`kf-btn ${
+                  isRecording ? 'kf-btn-warn' : 'kf-btn-outline'
+                }`}
                 onClick={isRecording ? stopRecording : startRecording}
               >
                 {isRecording ? '⏹ Stop' : '⏺ Record + AI Drums'}
@@ -681,8 +759,13 @@ function App() {
               </button>
             </div>
 
-            {isGeneratingDrums && <div className="kf-loading-status">🥁 Generating Beat...</div>}
-            {mixedTrackUrl && <audio controls src={mixedTrackUrl} className="kf-audio-player" />}
+            {isGeneratingDrums && (
+              <div className="kf-loading-status">🥁 Generating Beat...</div>
+            )}
+
+            {mixedTrackUrl && (
+              <audio controls src={mixedTrackUrl} className="kf-audio-player" />
+            )}
 
             {currentSongName && (
               <div className="kf-now-playing">
@@ -711,7 +794,10 @@ function App() {
                   ))}
                 </select>
 
-                {isLoadingSong && <div className="kf-tiny-loading">Fetching MIDI...</div>}
+                {isLoadingSong && (
+                  <div className="kf-tiny-loading">Fetching MIDI...</div>
+                )}
+
                 <div className="kf-divider">OR UPLOAD / LOCAL</div>
               </>
             )}
@@ -723,7 +809,9 @@ function App() {
                 {songLibrary.map((song, idx) => (
                   <button
                     key={song.id || idx}
-                    className={⁠ kf-song-item ${currentSongIndex === idx ? 'active' : ''} ⁠}
+                    className={`kf-song-item ${
+                      currentSongIndex === idx ? 'active' : ''
+                    }`}
                     onClick={async () => {
                       await initAudio();
                       setCurrentSongIndex(idx);
@@ -731,8 +819,12 @@ function App() {
                       resetMatcher();
                     }}
                   >
-                    <span className="kf-song-name">{song.name || song.fileName}</span>
-                    <span className="kf-song-meta">{buildExpectedSequenceFromSong(song.midi).length} notes</span>
+                    <span className="kf-song-name">
+                      {song.name || song.fileName}
+                    </span>
+                    <span className="kf-song-meta">
+                      {buildExpectedSequenceFromSong(song.midi).length} notes
+                    </span>
                   </button>
                 ))}
               </div>
@@ -750,10 +842,17 @@ function App() {
           />
 
           <div className="kf-integrations">
-            <span className={⁠ kf-integration-badge ${isInsForgeConfigured() ? 'active' : ''} ⁠}>
+            <span
+              className={`kf-integration-badge ${
+                isInsForgeConfigured() ? 'active' : ''
+              }`}
+            >
               {isInsForgeConfigured() ? '✓ InsForge' : '○ InsForge'}
             </span>
-            <span className={⁠ kf-integration-badge ${wsConnected ? 'active' : ''} ⁠}>
+
+            <span
+              className={`kf-integration-badge ${wsConnected ? 'active' : ''}`}
+            >
               {wsConnected ? '✓ AI Coach' : '○ AI Coach'}
             </span>
           </div>
